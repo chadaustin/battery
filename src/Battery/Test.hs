@@ -21,14 +21,19 @@ assertEqual expected actual = do
     when (expected /= actual) $ do
         assertionFailed $ "expected " ++ show expected ++ " did not equal actual " ++ show actual
 
-data TestCase = TestCase String (IO ())
+type TestName = String
+data TestCase = TestCase TestName (IO ())
+
+recordFailure :: TestName -> Reason -> IO ()
+recordFailure name reason = do
+    putStrLn $ name ++ " failed: " ++ reason
 
 defaultMain :: [TestCase] -> IO ()
 defaultMain tests = do
     forM_ tests $ \(TestCase name action) -> do
         putStrLn $ "running " ++ name
         catch action $ \(AssertionFailed reason) -> do
-            putStrLn $ "failed " ++ name ++ " because " ++ reason
+            putStrLn $ name ++ " failed: " ++ reason
 
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
