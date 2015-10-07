@@ -25,6 +25,7 @@ library
       base
     , template-haskell
     , language-haskell-extract
+    , ansi-terminal
   hs-source-dirs:      src
 
 executable basic
