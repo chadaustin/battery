@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, ExistentialQuantification #-}
+{-# LANGUAGE TemplateHaskell, ExistentialQuantification, StandaloneDeriving #-}
 
 module Battery.Test where
 
@@ -9,9 +9,7 @@ import Control.Monad (when, forM_)
 import System.Console.ANSI
 
 data Reason = forall a. Show a => NotEqual a a
-
-instance Show Reason where
-    show (NotEqual expected actual) = "NotEqual " ++ show expected ++ " " ++ show actual
+deriving instance Show Reason
 
 reasonString :: (String -> String) -> Reason -> String
 reasonString f (NotEqual expected actual) = "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
