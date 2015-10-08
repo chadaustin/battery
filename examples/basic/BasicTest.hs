@@ -3,6 +3,6 @@
 import Battery.Test
 
 test_foo = do
-    assertEqual 1 2
+    $assert $ Equal 1 2
 
 testMain
