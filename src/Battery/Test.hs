@@ -2,9 +2,10 @@
 
 module Battery.Test where
 
+import GHC.Stack
 import Language.Haskell.Extract
 import Language.Haskell.TH
-import Control.Exception (throwIO, catch, Exception)
+import Control.Exception (throwIO, catch, Exception, assert)
 import Control.Monad (when, forM_)
 import System.Console.ANSI
 
@@ -30,18 +31,12 @@ assertEqual expected actual = do
 type TestName = String
 data TestCase = TestCase TestName (IO ())
 
-yellow :: String -> String
-yellow s = setSGRCode [SetColor Foreground Vivid Yellow] ++ s ++ setSGRCode []
-
-red :: String -> String
-red s = setSGRCode [SetColor Foreground Vivid Red] ++ s ++ setSGRCode []
-
-green :: String -> String
-green s = setSGRCode [SetColor Foreground Vivid Green] ++ s ++ setSGRCode []
+color :: Color -> String -> String
+color c s = setSGRCode [SetColor Foreground Vivid c] ++ s ++ setSGRCode []
 
 recordFailure :: TestName -> Reason -> IO ()
 recordFailure name reason = do
-    putStrLn $ yellow name ++ " " ++ red "FAILED" ++ ": " ++ reasonString green reason
+    putStrLn $ color Yellow name ++ " " ++ color Red "FAILED" ++ ": " ++ reasonString (color Cyan) reason
 
 defaultMain :: [TestCase] -> IO ()
 defaultMain tests = do
