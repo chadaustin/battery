@@ -30,9 +30,17 @@ data TestCase = TestCase TestName (IO ())
 color :: Color -> String -> String
 color c s = setSGRCode [SetColor Foreground Vivid c] ++ s ++ setSGRCode []
 
-recordFailure :: TestName -> String -> Int -> Reason -> IO ()
-recordFailure name filename lineno reason = do
-    putStrLn $ filename ++ "(" ++ show lineno ++ "): " ++ color Yellow name ++ " " ++ color Red "FAILED" ++ ": " ++ reasonString (color Cyan) reason
+recordTestStart :: TestName -> IO ()
+recordTestStart name = do
+    putStr $ name ++ ": "
+
+recordTestSuccess :: TestName -> IO ()
+recordTestSuccess _ = do
+    putStrLn $ color Green "PASS"
+
+recordTestFailure :: TestName -> String -> Int -> Reason -> IO ()
+recordTestFailure name filename lineno reason = do
+    putStrLn $ color Red "FAILED" ++ "\n" ++ color Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Cyan) reason
     stack <- currentCallStack
     forM_ stack $ \entry -> do
         putStrLn entry
@@ -40,9 +48,9 @@ recordFailure name filename lineno reason = do
 defaultMain :: [TestCase] -> IO ()
 defaultMain tests = do
     forM_ tests $ \(TestCase name action) -> do
-        putStrLn $ "running " ++ name
-        catch action $ \(AssertionFailed filename lineno reason) -> do
-            recordFailure name filename lineno reason
+        recordTestStart name
+        catch (action >> recordTestSuccess name) $ \(AssertionFailed filename lineno reason) -> do
+            recordTestFailure name filename lineno reason
 
 testCase :: String -> IO () -> TestCase
 testCase = TestCase

@@ -13,4 +13,7 @@ test_commented_out = do
     $assert $ Equal 1 2
 -}
 
+xtest_disabled = do
+    $assert $ Equal 3 4
+
 testMain
