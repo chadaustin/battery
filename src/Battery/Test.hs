@@ -31,6 +31,9 @@ color c s = setSGRCode [SetColor Foreground Vivid c] ++ s ++ setSGRCode []
 recordFailure :: TestName -> String -> Int -> Reason -> IO ()
 recordFailure name filename lineno reason = do
     putStrLn $ filename ++ "(" ++ show lineno ++ "): " ++ color Yellow name ++ " " ++ color Red "FAILED" ++ ": " ++ reasonString (color Cyan) reason
+    stack <- currentCallStack
+    forM_ stack $ \entry -> do
+        putStrLn entry
 
 defaultMain :: [TestCase] -> IO ()
 defaultMain tests = do
