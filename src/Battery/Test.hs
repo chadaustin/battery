@@ -40,7 +40,8 @@ recordTestSuccess _ = do
 
 recordTestFailure :: TestName -> String -> Int -> Reason -> IO ()
 recordTestFailure name filename lineno reason = do
-    putStrLn $ color Red "FAILED" ++ "\n" ++ color Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Cyan) reason
+    putStrLn $ color Red "FAILED"
+    putStrLn $ color Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Cyan) reason
     stack <- currentCallStack
     forM_ stack $ \entry -> do
         putStrLn entry
