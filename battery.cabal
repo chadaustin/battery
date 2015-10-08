@@ -24,8 +24,8 @@ library
   build-depends:
       base
     , template-haskell
-    , language-haskell-extract
     , ansi-terminal
+    , regex-posix
   hs-source-dirs:      src
 
 executable basic

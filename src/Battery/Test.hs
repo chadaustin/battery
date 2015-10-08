@@ -3,11 +3,13 @@
 module Battery.Test where
 
 import GHC.Stack
-import Language.Haskell.Extract
 import Language.Haskell.TH
 import Control.Exception (throwIO, catch, Exception)
 import Control.Monad (when, forM_)
 import System.Console.ANSI
+import Data.List
+import Data.Maybe
+import Text.Regex.Posix
 
 data Reason = forall a. Show a => NotEqual a a
 deriving instance Show Reason
@@ -63,9 +65,27 @@ assert = do
     let (lineno, _) = loc_start loc
     [| assert' filename lineno |]
 
+extractAllFunctions :: String -> Q [String]
+extractAllFunctions pattern = do
+    loc <- location
+    file <- runIO $ readFile $ loc_filename loc
+    return $ nub $ filter (=~pattern) $ map fst $ concat $ map lex $ lines file
+
+functionExtractorMap :: String -> ExpQ -> ExpQ
+functionExtractorMap pattern funcName = do
+    functions <- extractAllFunctions pattern
+    fn <- funcName
+    let makePair n = do
+            nm' <- lookupValueName n
+            return $ case nm' of
+                Just nm -> Just $ AppE (AppE (fn) (LitE $ StringL $ n)) (VarE nm)
+                Nothing -> Nothing
+    fmap (ListE . catMaybes) $ mapM makePair functions
+
 testMain :: Q [Dec]
 testMain = do
-    body <- [| defaultMain $(collectTests) |]
+    let tests = collectTests
+    body <- [| defaultMain $(tests) |]
     return [FunD (mkName "main")
         [ Clause [] (NormalB body) []
         ]]
