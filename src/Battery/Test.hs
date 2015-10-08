@@ -27,8 +27,8 @@ assertionFailed filename lineno reason = throwIO $ AssertionFailed filename line
 type TestName = String
 data TestCase = TestCase TestName (IO ())
 
-color :: Color -> String -> String
-color c s = setSGRCode [SetColor Foreground Vivid c] ++ s ++ setSGRCode []
+color :: ColorIntensity -> Color -> String -> String
+color i c s = setSGRCode [SetColor Foreground i c] ++ s ++ setSGRCode []
 
 recordTestStart :: TestName -> IO ()
 recordTestStart name = do
@@ -36,12 +36,16 @@ recordTestStart name = do
 
 recordTestSuccess :: TestName -> IO ()
 recordTestSuccess _ = do
-    putStrLn $ color Green "PASS"
+    putStrLn $ color Vivid Green "PASS"
+
+recordTestDisabled :: TestName -> IO ()
+recordTestDisabled _ = do
+    putStrLn $ color Dull White "DISABLED"
 
 recordTestFailure :: TestName -> String -> Int -> Reason -> IO ()
 recordTestFailure name filename lineno reason = do
-    putStrLn $ color Red "FAILED"
-    putStrLn $ color Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Cyan) reason
+    putStrLn $ color Vivid Red "FAILED"
+    putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Vivid Cyan) reason
     stack <- currentCallStack
     forM_ stack $ \entry -> do
         putStrLn entry
@@ -50,8 +54,11 @@ defaultMain :: [TestCase] -> IO ()
 defaultMain tests = do
     forM_ tests $ \(TestCase name action) -> do
         recordTestStart name
-        catch (action >> recordTestSuccess name) $ \(AssertionFailed filename lineno reason) -> do
-            recordTestFailure name filename lineno reason
+        case name of
+            'x':_ -> recordTestDisabled name
+            _ -> do
+                catch (action >> recordTestSuccess name) $ \(AssertionFailed filename lineno reason) -> do
+                    recordTestFailure name filename lineno reason
 
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
@@ -103,4 +110,4 @@ listGenerator :: String -> ExpQ
 listGenerator beginning = functionExtractorMap beginning (return $ VarE $ mkName "testCase")
 
 collectTests :: ExpQ
-collectTests = listGenerator "^test_"
+collectTests = listGenerator "^x?test_"
