@@ -16,11 +16,13 @@ type AssertLocation = (String, Int)
 toAssertLocation :: Loc -> AssertLocation
 toAssertLocation Loc{..} = (loc_filename, fst loc_start)
 
-data AssertionFailed = forall a. (Show a, FailureReason a) => AssertionFailed AssertLocation a
+data AssertionFailed = AssertionFailed AssertLocation FailureReason
 instance Exception AssertionFailed
-deriving instance Show AssertionFailed
 
-assertionFailed :: (FailureReason a, Show a) => AssertLocation -> a -> IO ()
+instance Show AssertionFailed where
+    show (AssertionFailed loc reason) = "AssertionFailed " ++ show loc ++ " " ++ reason id
+
+assertionFailed :: AssertLocation -> FailureReason -> IO ()
 assertionFailed loc reason = throwIO $ AssertionFailed loc reason
 
 type TestName = String
@@ -41,10 +43,10 @@ recordTestDisabled :: TestName -> IO ()
 recordTestDisabled _ = do
     putStrLn $ color Dull White "DISABLED"
 
-recordTestFailure :: FailureReason a => TestName -> AssertLocation -> a -> IO ()
+recordTestFailure :: TestName -> AssertLocation -> FailureReason -> IO ()
 recordTestFailure name (filename, lineno) reason = do
     putStrLn $ color Vivid Red "FAILED"
-    putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ formatReason (color Vivid Cyan) reason
+    putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reason (color Vivid Cyan)
     stack <- currentCallStack
     forM_ stack $ \entry -> do
         putStrLn entry
@@ -62,24 +64,20 @@ defaultMain tests = do
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
 
-class FailureReason a where
-    formatReason :: (String -> String) -> a -> String
+type FailureReason = (String -> String) -> String
 
 class Check a where
-    type Failure a
-    check :: a -> Maybe (Failure a)
+    check :: a -> Maybe FailureReason
 
 data Equal a = (Show a, Eq a) => Equal a a
-data NotEqualReason a = Show a => NotEqualReason a a
-deriving instance Show (NotEqualReason a)
-
-instance FailureReason (NotEqualReason a) where
-    formatReason f (NotEqualReason expected actual) = "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
 instance Check (Equal a) where
-    type Failure (Equal a) = NotEqualReason a
-    check (Equal expected actual) = if expected == actual then Nothing else Just $ NotEqualReason expected actual
+    check (Equal expected actual) =
+        if expected == actual then
+            Nothing
+        else
+            Just $ \f -> "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
 
-assert' :: (Check a, FailureReason (Failure a), Show (Failure a)) => AssertLocation -> a -> IO ()
+assert' :: Check a => AssertLocation -> a -> IO ()
 assert' loc chk = do
     case check chk of
         Just reason -> assertionFailed loc reason
