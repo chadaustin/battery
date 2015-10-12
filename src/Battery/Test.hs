@@ -90,14 +90,9 @@ assert = do
     loc <- fmap toAssertLocation location
     [| assert' loc |]
 
-assertEqual' :: (Show a, Eq a) => AssertLocation -> a -> a -> IO ()
-assertEqual' loc expected actual = do
-    assert' loc $ Equal expected actual
-
 assertEqual :: Q Exp
 assertEqual = do
-    loc <- fmap toAssertLocation location
-    [| assertEqual' loc |]
+    [| \x y -> $assert $ Equal x y |]
 
 extractAllFunctions :: String -> Q [String]
 extractAllFunctions pattern = do
