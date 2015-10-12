@@ -4,6 +4,7 @@ import Battery.Test
 
 test_zzz = do
     $assert $ Equal 0 0
+    $assertEqual 0 0
 
 test_foo = do
     $assert $ Equal 1 2

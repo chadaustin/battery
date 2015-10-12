@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, ExistentialQuantification, StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell, ExistentialQuantification, StandaloneDeriving, TypeFamilies, FlexibleContexts #-}
 
 module Battery.Test where
 
@@ -11,17 +11,11 @@ import Data.List
 import Data.Maybe
 import Text.Regex.Posix
 
-data Reason = forall a. Show a => NotEqual a a
-deriving instance Show Reason
-
-reasonString :: (String -> String) -> Reason -> String
-reasonString f (NotEqual expected actual) = "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
-
-data AssertionFailed = AssertionFailed String Int Reason
-    deriving (Show)
+data AssertionFailed = forall a. (Show a, FailureReason a) => AssertionFailed String Int a
 instance Exception AssertionFailed
+deriving instance Show AssertionFailed
 
-assertionFailed :: String -> Int -> Reason -> IO ()
+assertionFailed :: (FailureReason a, Show a) => String -> Int -> a -> IO ()
 assertionFailed filename lineno reason = throwIO $ AssertionFailed filename lineno reason
 
 type TestName = String
@@ -42,10 +36,10 @@ recordTestDisabled :: TestName -> IO ()
 recordTestDisabled _ = do
     putStrLn $ color Dull White "DISABLED"
 
-recordTestFailure :: TestName -> String -> Int -> Reason -> IO ()
+recordTestFailure :: FailureReason a => TestName -> String -> Int -> a -> IO ()
 recordTestFailure name filename lineno reason = do
     putStrLn $ color Vivid Red "FAILED"
-    putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reasonString (color Vivid Cyan) reason
+    putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ formatReason (color Vivid Cyan) reason
     stack <- currentCallStack
     forM_ stack $ \entry -> do
         putStrLn entry
@@ -63,14 +57,26 @@ defaultMain tests = do
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
 
-data Check = forall a. (Show a, Eq a) => Equal a a
+class FailureReason a where
+    formatReason :: (String -> String) -> a -> String
 
-verify :: Check -> Maybe Reason
-verify (Equal lhs rhs) = if lhs == rhs then Nothing else Just $ NotEqual lhs rhs
+class Check a where
+    type Failure a
+    check :: a -> Maybe (Failure a)
 
-assert' :: String -> Int -> Check -> IO ()
-assert' filename lineno check = do
-    case verify check of
+data Equal a = (Show a, Eq a) => Equal a a
+data NotEqualReason a = Show a => NotEqualReason a a
+deriving instance Show (NotEqualReason a)
+
+instance FailureReason (NotEqualReason a) where
+    formatReason f (NotEqualReason expected actual) = "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
+instance Check (Equal a) where
+    type Failure (Equal a) = NotEqualReason a
+    check (Equal expected actual) = if expected == actual then Nothing else Just $ NotEqualReason expected actual
+
+assert' :: (Check a, FailureReason (Failure a), Show (Failure a)) => String -> Int -> a -> IO ()
+assert' filename lineno chk = do
+    case check chk of
         Just reason -> assertionFailed filename lineno reason
         Nothing -> return ()
 
@@ -80,6 +86,17 @@ assert = do
     let filename = loc_filename loc
     let (lineno, _) = loc_start loc
     [| assert' filename lineno |]
+
+assertEqual' :: (Show a, Eq a) => String -> Int -> a -> a -> IO ()
+assertEqual' filename lineno expected actual = do
+    assert' filename lineno $ Equal expected actual
+
+assertEqual :: Q Exp
+assertEqual = do
+    loc <- location
+    let filename = loc_filename loc
+    let (lineno, _) = loc_start loc
+    [| assertEqual' filename lineno |]
 
 extractAllFunctions :: String -> Q [String]
 extractAllFunctions pattern = do
