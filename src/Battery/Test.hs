@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, ExistentialQuantification, StandaloneDeriving, TypeFamilies, FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell, ExistentialQuantification, StandaloneDeriving, TypeFamilies, FlexibleContexts, RecordWildCards #-}
 
 module Battery.Test where
 
@@ -11,12 +11,17 @@ import Data.List
 import Data.Maybe
 import Text.Regex.Posix
 
-data AssertionFailed = forall a. (Show a, FailureReason a) => AssertionFailed String Int a
+type AssertLocation = (String, Int)
+
+toAssertLocation :: Loc -> AssertLocation
+toAssertLocation Loc{..} = (loc_filename, fst loc_start)
+
+data AssertionFailed = forall a. (Show a, FailureReason a) => AssertionFailed AssertLocation a
 instance Exception AssertionFailed
 deriving instance Show AssertionFailed
 
-assertionFailed :: (FailureReason a, Show a) => String -> Int -> a -> IO ()
-assertionFailed filename lineno reason = throwIO $ AssertionFailed filename lineno reason
+assertionFailed :: (FailureReason a, Show a) => AssertLocation -> a -> IO ()
+assertionFailed loc reason = throwIO $ AssertionFailed loc reason
 
 type TestName = String
 data TestCase = TestCase TestName (IO ())
@@ -36,8 +41,8 @@ recordTestDisabled :: TestName -> IO ()
 recordTestDisabled _ = do
     putStrLn $ color Dull White "DISABLED"
 
-recordTestFailure :: FailureReason a => TestName -> String -> Int -> a -> IO ()
-recordTestFailure name filename lineno reason = do
+recordTestFailure :: FailureReason a => TestName -> AssertLocation -> a -> IO ()
+recordTestFailure name (filename, lineno) reason = do
     putStrLn $ color Vivid Red "FAILED"
     putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ formatReason (color Vivid Cyan) reason
     stack <- currentCallStack
@@ -51,8 +56,8 @@ defaultMain tests = do
         case name of
             'x':_ -> recordTestDisabled name
             _ -> do
-                catch (action >> recordTestSuccess name) $ \(AssertionFailed filename lineno reason) -> do
-                    recordTestFailure name filename lineno reason
+                catch (action >> recordTestSuccess name) $ \(AssertionFailed loc reason) -> do
+                    recordTestFailure name loc reason
 
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
@@ -74,29 +79,25 @@ instance Check (Equal a) where
     type Failure (Equal a) = NotEqualReason a
     check (Equal expected actual) = if expected == actual then Nothing else Just $ NotEqualReason expected actual
 
-assert' :: (Check a, FailureReason (Failure a), Show (Failure a)) => String -> Int -> a -> IO ()
-assert' filename lineno chk = do
+assert' :: (Check a, FailureReason (Failure a), Show (Failure a)) => AssertLocation -> a -> IO ()
+assert' loc chk = do
     case check chk of
-        Just reason -> assertionFailed filename lineno reason
+        Just reason -> assertionFailed loc reason
         Nothing -> return ()
 
 assert :: Q Exp
 assert = do
-    loc <- location
-    let filename = loc_filename loc
-    let (lineno, _) = loc_start loc
-    [| assert' filename lineno |]
+    loc <- fmap toAssertLocation location
+    [| assert' loc |]
 
-assertEqual' :: (Show a, Eq a) => String -> Int -> a -> a -> IO ()
-assertEqual' filename lineno expected actual = do
-    assert' filename lineno $ Equal expected actual
+assertEqual' :: (Show a, Eq a) => AssertLocation -> a -> a -> IO ()
+assertEqual' loc expected actual = do
+    assert' loc $ Equal expected actual
 
 assertEqual :: Q Exp
 assertEqual = do
-    loc <- location
-    let filename = loc_filename loc
-    let (lineno, _) = loc_start loc
-    [| assertEqual' filename lineno |]
+    loc <- fmap toAssertLocation location
+    [| assertEqual' loc |]
 
 extractAllFunctions :: String -> Q [String]
 extractAllFunctions pattern = do
