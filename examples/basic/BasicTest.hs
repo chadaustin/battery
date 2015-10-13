@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
+import Data.Word
 import Battery.Test
 
 test_zzz = do
@@ -16,5 +17,8 @@ test_commented_out = do
 
 xtest_disabled = do
     $assert $ Equal 3 4
+
+prop_sometimes_failing :: Word8 -> Bool
+prop_sometimes_failing u = u < 255
 
 testMain

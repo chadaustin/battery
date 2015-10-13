@@ -5,11 +5,14 @@ module Battery.Test where
 import GHC.Stack
 import Language.Haskell.TH
 import Control.Exception (throwIO, catch, Exception)
-import Control.Monad (when, forM_, replicateM)
+import Control.Monad
 import System.Console.ANSI
 import Data.List
 import Data.Maybe
 import Text.Regex.Posix
+
+-- TODO: actually depend on quickcheck
+--import Test.QuickCheck
 
 type AssertLocation = (String, Int)
 
@@ -64,6 +67,10 @@ defaultMain tests = do
 testCase :: String -> IO () -> TestCase
 testCase = TestCase
 
+-- TODO: actually enable quickcheck support
+--testProp :: Testable a => String -> a -> TestCase
+--testProp = TestProp
+
 type FailureReason = (String -> String) -> String
 
 class Check a where
@@ -102,22 +109,29 @@ makeAssert arity checkConstructor = do
 assertEqual :: Q Exp
 assertEqual = makeAssert 2 'Equal
 
-extractAllFunctions :: String -> Q [String]
-extractAllFunctions pattern = do
+-- TODO: import Data.Safe
+headMay :: [a] -> Maybe a
+headMay (x:_) = Just x
+headMay [] = Nothing
+
+functionExtractorMap :: [(String, Exp)] -> Q Exp
+functionExtractorMap patterns = do
     loc <- location
     file <- runIO $ readFile $ loc_filename loc
-    return $ nub $ filter (=~pattern) $ map fst $ concat $ map lex $ lines file
 
-functionExtractorMap :: String -> ExpQ -> ExpQ
-functionExtractorMap pattern funcName = do
-    functions <- extractAllFunctions pattern
-    fn <- funcName
-    let makePair n = do
-            nm' <- lookupValueName n
-            return $ case nm' of
-                Just nm -> Just $ AppE (AppE (fn) (LitE $ StringL $ n)) (VarE nm)
-                Nothing -> Nothing
-    fmap (ListE . catMaybes) $ mapM makePair functions
+    let syms = nub $ map fst $ concat $ map lex $ lines file
+    pairs <- forM syms $ \sym -> do
+        maybeSymName <- lookupValueName sym
+        case maybeSymName of
+            Just symName -> do
+                fmap (headMay . catMaybes) $ forM patterns $ \(pattern, fn) -> do
+                    if sym =~ pattern then
+                        return $ Just $ AppE (AppE fn (LitE $ StringL sym)) (VarE symName)
+                    else
+                        return Nothing
+            Nothing -> return Nothing
+
+    return $ ListE $ catMaybes $ (pairs :: [Maybe Exp])
 
 testMain :: Q [Dec]
 testMain = do
@@ -127,8 +141,9 @@ testMain = do
         [ Clause [] (NormalB body) []
         ]]
 
-listGenerator :: String -> ExpQ
-listGenerator beginning = functionExtractorMap beginning (return $ VarE $ mkName "testCase")
-
-collectTests :: ExpQ
-collectTests = listGenerator "^x?test_"
+collectTests :: Q Exp
+collectTests = functionExtractorMap
+    [ ("^x?test_", VarE 'testCase)
+-- TODO: actually enable quickcheck support
+--    , ("^x?prop_", VarE 'testProp)
+    ]
