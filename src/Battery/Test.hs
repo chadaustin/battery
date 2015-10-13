@@ -5,7 +5,7 @@ module Battery.Test where
 import GHC.Stack
 import Language.Haskell.TH
 import Control.Exception (throwIO, catch, Exception)
-import Control.Monad (when, forM_)
+import Control.Monad (when, forM_, replicateM)
 import System.Console.ANSI
 import Data.List
 import Data.Maybe
@@ -88,9 +88,19 @@ assert = do
     loc <- fmap toAssertLocation location
     [| assert' loc |]
 
+multiApp :: Exp -> [Exp] -> Exp
+multiApp fn [] = error "Cannot apply zero arguments"
+multiApp fn [param] = AppE fn param
+multiApp fn params = AppE (multiApp fn $ init params) (last params)
+
+makeAssert :: Int -> Name -> Q Exp
+makeAssert arity checkConstructor = do
+    names <- replicateM arity $ newName "x"
+    a <- assert
+    return $ LamE (fmap VarP names) $ AppE a $ multiApp (ConE checkConstructor) $ fmap VarE names
+
 assertEqual :: Q Exp
-assertEqual = do
-    [| \x y -> $assert $ Equal x y |]
+assertEqual = makeAssert 2 'Equal
 
 extractAllFunctions :: String -> Q [String]
 extractAllFunctions pattern = do
