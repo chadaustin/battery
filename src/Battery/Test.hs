@@ -10,9 +10,7 @@ import System.Console.ANSI
 import Data.List
 import Data.Maybe
 import Text.Regex.Posix
-
--- TODO: actually depend on quickcheck
---import Test.QuickCheck
+import Test.QuickCheck
 
 type AssertLocation = (String, Int)
 
@@ -29,7 +27,7 @@ assertionFailed :: AssertLocation -> FailureReason -> IO ()
 assertionFailed loc reason = throwIO $ AssertionFailed loc reason
 
 type TestName = String
-data TestCase = TestCase TestName (IO ())
+data Test = TestCase TestName (IO ()) | forall a. Testable a => TestProp TestName a
 
 color :: ColorIntensity -> Color -> String -> String
 color i c s = setSGRCode [SetColor Foreground i c] ++ s ++ setSGRCode []
@@ -54,18 +52,32 @@ recordTestFailure name (filename, lineno) reason = do
     forM_ stack $ \entry -> do
         putStrLn entry
 
-defaultMain :: [TestCase] -> IO ()
+testName :: Test -> TestName
+testName (TestCase name _) = name
+testName (TestProp name _) = name
+
+defaultMain :: [Test] -> IO ()
 defaultMain tests = do
-    forM_ tests $ \(TestCase name action) -> do
-        recordTestStart name
+    forM_ tests $ \test -> do
+        let name = testName test
+        recordTestStart $ name
         case name of
             'x':_ -> recordTestDisabled name
-            _ -> do
-                catch (action >> recordTestSuccess name) $ \(AssertionFailed loc reason) -> do
-                    recordTestFailure name loc reason
+            _ -> case test of
+                (TestCase _ action) -> do
+                    catch (action >> recordTestSuccess name) $ \(AssertionFailed loc reason) -> do
+                        recordTestFailure name loc reason
+                (TestProp _ testable) -> do
+                    result <- quickCheckWithResult stdArgs{chatty=False} testable
+                    case result of
+                        Success{..} -> recordTestSuccess name
+                        _ -> recordTestFailure name ("unknown", 0) $ \_ -> show result
 
-testCase :: String -> IO () -> TestCase
+testCase :: String -> IO () -> Test
 testCase = TestCase
+
+testProp :: Testable a => TestName -> a -> Test
+testProp = TestProp
 
 -- TODO: actually enable quickcheck support
 --testProp :: Testable a => String -> a -> TestCase
@@ -144,6 +156,5 @@ testMain = do
 collectTests :: Q Exp
 collectTests = functionExtractorMap
     [ ("^x?test_", VarE 'testCase)
--- TODO: actually enable quickcheck support
---    , ("^x?prop_", VarE 'testProp)
+    , ("^x?prop_", VarE 'testProp)
     ]
