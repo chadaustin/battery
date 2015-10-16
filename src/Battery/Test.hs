@@ -109,9 +109,7 @@ assert = do
     [| assert' loc |]
 
 multiApp :: Exp -> [Exp] -> Exp
-multiApp fn [] = error "Cannot apply zero arguments"
-multiApp fn [param] = AppE fn param
-multiApp fn params = AppE (multiApp fn $ init params) (last params)
+multiApp = foldl AppE
 
 makeAssert :: Int -> Name -> Q Exp
 makeAssert arity checkConstructor = do
