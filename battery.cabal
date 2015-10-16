@@ -27,6 +27,7 @@ library
     , ansi-terminal
     , regex-posix
     , QuickCheck
+    , safe
   hs-source-dirs:      src
 
 executable basic

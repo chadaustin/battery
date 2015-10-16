@@ -2,6 +2,7 @@
 
 module Battery.Test where
 
+import Safe
 import GHC.Stack
 import Language.Haskell.TH
 import Control.Exception (throwIO, catch, Exception)
@@ -11,23 +12,27 @@ import Data.List
 import Data.Maybe
 import Text.Regex.Posix
 import Test.QuickCheck
+import System.IO
 
-type AssertLocation = (String, Int)
+type TestName = String
+type Location = (FilePath, Int)
+type FailureReason = (String -> String) -> String
 
-toAssertLocation :: Loc -> AssertLocation
-toAssertLocation Loc{..} = (loc_filename, fst loc_start)
+data TestResult = TRSuccess | TRFailure Location FailureReason | TRDisabled
+data Test = Test TestName Location (IO TestResult)
+--data Test = TestCase TestName (IO ()) | forall a. Testable a => TestProp TestName a
 
-data AssertionFailed = AssertionFailed AssertLocation FailureReason
+toLocation :: Loc -> Location
+toLocation Loc{..} = (loc_filename, fst loc_start)
+
+data AssertionFailed = AssertionFailed Location FailureReason
 instance Exception AssertionFailed
 
 instance Show AssertionFailed where
     show (AssertionFailed loc reason) = "AssertionFailed " ++ show loc ++ " " ++ reason id
 
-assertionFailed :: AssertLocation -> FailureReason -> IO ()
+assertionFailed :: Location -> FailureReason -> IO ()
 assertionFailed loc reason = throwIO $ AssertionFailed loc reason
-
-type TestName = String
-data Test = TestCase TestName (IO ()) | forall a. Testable a => TestProp TestName a
 
 color :: ColorIntensity -> Color -> String -> String
 color i c s = setSGRCode [SetColor Foreground i c] ++ s ++ setSGRCode []
@@ -44,7 +49,7 @@ recordTestDisabled :: TestName -> IO ()
 recordTestDisabled _ = do
     putStrLn $ color Dull White "DISABLED"
 
-recordTestFailure :: TestName -> AssertLocation -> FailureReason -> IO ()
+recordTestFailure :: TestName -> Location -> FailureReason -> IO ()
 recordTestFailure name (filename, lineno) reason = do
     putStrLn $ color Vivid Red "FAILED"
     putStrLn $ color Vivid Yellow (filename ++ "(" ++ show lineno ++ ")") ++ ": " ++ reason (color Vivid Cyan)
@@ -52,38 +57,34 @@ recordTestFailure name (filename, lineno) reason = do
     forM_ stack $ \entry -> do
         putStrLn entry
 
-testName :: Test -> TestName
-testName (TestCase name _) = name
-testName (TestProp name _) = name
-
 defaultMain :: [Test] -> IO ()
 defaultMain tests = do
-    forM_ tests $ \test -> do
-        let name = testName test
+    forM_ tests $ \(Test name testLocation action) -> do
         recordTestStart $ name
-        case name of
-            'x':_ -> recordTestDisabled name
-            _ -> case test of
-                (TestCase _ action) -> do
-                    catch (action >> recordTestSuccess name) $ \(AssertionFailed loc reason) -> do
-                        recordTestFailure name loc reason
-                (TestProp _ testable) -> do
-                    result <- quickCheckWithResult stdArgs{chatty=False} testable
-                    case result of
-                        Success{..} -> recordTestSuccess name
-                        _ -> recordTestFailure name ("unknown", 0) $ \_ -> show result
+        result <- action
+        case result of
+            TRSuccess -> recordTestSuccess name
+            TRFailure failureLocation reason -> recordTestFailure name failureLocation reason
+            TRDisabled -> recordTestDisabled name
 
-testCase :: String -> IO () -> Test
-testCase = TestCase
+testCase :: TestName -> Location -> IO () -> Test
+testCase name location action = Test name location $ do
+    catch (action >> return TRSuccess) $ \(AssertionFailed loc reason) -> do
+        return $ TRFailure loc reason
 
-testProp :: Testable a => TestName -> a -> Test
-testProp = TestProp
+testProperty :: Testable a => TestName -> Location -> a -> Test
+testProperty name location testable = Test name location $ do
+    result <- quickCheckWithResult stdArgs{chatty=False} testable
+    case result of
+        Success{..} -> return TRSuccess
+        _ -> return $ TRFailure location $ \_ -> show result
+
+testDisabled :: TestName -> Location -> a -> Test
+testDisabled name location _ = Test name location $ return TRDisabled
 
 -- TODO: actually enable quickcheck support
 --testProp :: Testable a => String -> a -> TestCase
 --testProp = TestProp
-
-type FailureReason = (String -> String) -> String
 
 class Check a where
     check :: a -> Maybe FailureReason
@@ -96,7 +97,7 @@ instance Check (Equal a) where
         else
             Just $ \f -> "expected " ++ f (show expected) ++ " but got " ++ f (show actual)
 
-assert' :: Check a => AssertLocation -> a -> IO ()
+assert' :: Check a => Location -> a -> IO ()
 assert' loc chk = do
     case check chk of
         Just reason -> assertionFailed loc reason
@@ -104,7 +105,7 @@ assert' loc chk = do
 
 assert :: Q Exp
 assert = do
-    loc <- fmap toAssertLocation location
+    loc <- fmap toLocation location
     [| assert' loc |]
 
 multiApp :: Exp -> [Exp] -> Exp
@@ -121,25 +122,29 @@ makeAssert arity checkConstructor = do
 assertEqual :: Q Exp
 assertEqual = makeAssert 2 'Equal
 
--- TODO: import Data.Safe
-headMay :: [a] -> Maybe a
-headMay (x:_) = Just x
-headMay [] = Nothing
-
 functionExtractorMap :: [(String, Exp)] -> Q Exp
 functionExtractorMap patterns = do
     loc <- location
     file <- runIO $ readFile $ loc_filename loc
 
-    let syms = nub $ map fst $ concat $ map lex $ lines file
-    pairs <- forM syms $ \sym -> do
+    let extractToken :: (Int, String) -> Maybe (Int, String)
+        extractToken (lineno, line) = case lex line of
+            [] -> Nothing
+            [(eme, _)] -> Just (lineno, eme)
+
+    -- reverse twice because the last duplicate symbol is usually the definition
+    -- WISH: it would be so nice if we could just ask TH for the line number of a definition...
+    let syms = reverse $ nubBy (\a b -> snd a == snd b) $ reverse $ catMaybes $ map extractToken $ zip [1..] $ lines file
+    pairs <- forM syms $ \(lineno, sym) -> do
         maybeSymName <- lookupValueName sym
         case maybeSymName of
             Just symName -> do
                 fmap (headMay . catMaybes) $ forM patterns $ \(pattern, fn) -> do
-                    if sym =~ pattern then
-                        return $ Just $ AppE (AppE fn (LitE $ StringL sym)) (VarE symName)
-                    else
+                    if sym =~ pattern then do
+                        let tloc = (loc_filename loc, lineno)
+                        tl <- [| tloc |]
+                        return $ Just $ AppE (AppE (AppE fn (LitE $ StringL sym)) tl) (VarE symName)
+                    else do
                         return Nothing
             Nothing -> return Nothing
 
@@ -155,6 +160,8 @@ testMain = do
 
 collectTests :: Q Exp
 collectTests = functionExtractorMap
-    [ ("^x?test_", VarE 'testCase)
-    , ("^x?prop_", VarE 'testProp)
+    [ ("^test_", VarE 'testCase)
+    , ("^xtest_", VarE 'testDisabled)
+    , ("^prop_", VarE 'testProperty)
+    , ("^xprop_", VarE 'testDisabled)
     ]
