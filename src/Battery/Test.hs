@@ -13,6 +13,9 @@ import Data.Maybe
 import Text.Regex.Posix
 import Test.QuickCheck
 import System.IO
+import Data.IORef
+import System.FilePath
+import System.Directory
 
 type TestName = String
 type Location = (FilePath, Int)
@@ -20,7 +23,6 @@ type FailureReason = (String -> String) -> String
 
 data TestResult = TRSuccess | TRFailure Location FailureReason | TRDisabled
 data Test = Test TestName Location (IO TestResult)
---data Test = TestCase TestName (IO ()) | forall a. Testable a => TestProp TestName a
 
 toLocation :: Loc -> Location
 toLocation Loc{..} = (loc_filename, fst loc_start)
@@ -81,10 +83,6 @@ testProperty name location testable = Test name location $ do
 
 testDisabled :: TestName -> Location -> a -> Test
 testDisabled name location _ = Test name location $ return TRDisabled
-
--- TODO: actually enable quickcheck support
---testProp :: Testable a => String -> a -> TestCase
---testProp = TestProp
 
 class Check a where
     check :: a -> Maybe FailureReason
@@ -155,6 +153,39 @@ testMain = do
     return [FunD (mkName "main")
         [ Clause [] (NormalB body) []
         ]]
+
+-- Python's os.walk for Haskell
+pathWalk :: FilePath -> (FilePath -> [FilePath] -> [FilePath] -> IO ()) -> IO ()
+pathWalk root fn = do
+    allContents <- getDirectoryContents root
+    let contents = filter (`notElem` [".", ".."]) allContents
+    putStrLn $ root ++ ": " ++ show contents
+
+    dirs <- filterM (\p -> doesDirectoryExist $ joinPath [root, p]) contents
+    files <- filterM (\p -> doesFileExist $ joinPath [root, p]) contents
+
+    putStrLn $ "dirs: " ++ show dirs
+    putStrLn $ "files: " ++ show files
+
+    fn root dirs files
+
+    forM_ dirs $ \dir -> do
+        let combined = joinPath [root, dir]
+        pathWalk combined fn
+
+multiFileTestMain :: Q [Dec]
+multiFileTestMain = do
+    this_filename <- fmap loc_filename location
+    runIO $ do
+        testFiles <- newIORef []
+        pathWalk (takeDirectory this_filename) $ \root dirs files -> do
+            forM_ files $ \file -> do
+                when ("Test.hs" `isSuffixOf` file) $ do
+                    modifyIORef testFiles ((joinPath [root, file]):)
+
+            putStrLn $ show (root, dirs, files)
+        readIORef testFiles >>= (putStrLn . show . reverse)
+    return []
 
 collectTests :: Q Exp
 collectTests = functionExtractorMap
